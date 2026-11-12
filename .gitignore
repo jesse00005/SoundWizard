@@ -1,0 +1,8 @@
+build/
+dist/
+*.zip
+.vs/
+.vscode/
+CMakeUserPresets.json
+*.user
+*.pdb
