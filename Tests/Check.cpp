@@ -35,6 +35,143 @@ static double energy(const juce::AudioBuffer<float>& buffer) {
     return sum;
 }
 
+static double frequency(const juce::AudioBuffer<float>& audio, double rate, double startSeconds, double duration, int channel = 0) {
+    const int start = juce::roundToInt(startSeconds * rate);
+    const int end = juce::jmin(audio.getNumSamples(), start + juce::roundToInt(duration * rate));
+    double first = 0, last = 0;
+    int crossings = 0;
+    for (int i = start + 1; i < end; ++i) {
+        const float previous = audio.getSample(channel, i - 1), current = audio.getSample(channel, i);
+        if (previous <= 0 && current > 0) {
+            const double position = i - 1 + (double)(-previous) / (current - previous);
+            if (crossings++ == 0) first = position;
+            last = position;
+        }
+    }
+    check(crossings >= 3, "Insufficient waveform periods for a pitch check");
+    return (crossings - 1) * rate / (last - first);
+}
+
+static std::unique_ptr<SoundFontEngine> monoEngine(const juce::File& factory, double rate) {
+    juce::MemoryBlock bytes;
+    check(factory.loadFileAsData(bytes), "Cannot read mono test SoundFont");
+    auto engine = SoundFontEngine::load(bytes.getData(), (int)bytes.getSize());
+    check(engine != nullptr, "Cannot load mono test SoundFont");
+    engine->setSampleRate(rate);
+    engine->setEnvelope(true, 0.001f, 0.001f, 1, 0.005f);
+    engine->setPlaybackMode(true, 0.4f);
+    return engine;
+}
+
+static void checkMono(const juce::File& factory, double rate) {
+    auto engine = monoEngine(factory, rate);
+    juce::AudioBuffer<float> warmup(2, juce::roundToInt(rate * 0.1));
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 48, 0.8f));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    engine->handleMidi(juce::MidiMessage::noteOn(2, 60, 0.8f));
+    check(engine->voices() == 1, "Mono overlap started a second note");
+    juce::AudioBuffer<float> glide(2, juce::roundToInt(rate * 0.5));
+    engine->render(glide, 0, glide.getNumSamples());
+    const double early = frequency(glide, rate, 0, 0.04);
+    const double middle = frequency(glide, rate, 0.18, 0.04);
+    const double late = frequency(glide, rate, 0.44, 0.04);
+    check(early > 128 && early < 146, "Portamento jumped to the new pitch");
+    check(middle > 177 && middle < 193, "Portamento midpoint timing is wrong");
+    check(std::abs(late - 261.625) < 2, "Portamento did not reach the target pitch");
+    engine->handleMidi(juce::MidiMessage::pitchWheel(2, 16383));
+    engine->render(glide, 0, glide.getNumSamples());
+    check(std::abs(frequency(glide, rate, 0.4, 0.05) - 293.66) < 2, "Pitch bend did not combine with glide tuning");
+    engine->handleMidi(juce::MidiMessage::pitchWheel(2, 8192));
+    engine->handleMidi(juce::MidiMessage::noteOff(2, 60));
+    engine->render(glide, 0, glide.getNumSamples());
+    check(std::abs(frequency(glide, rate, 0.44, 0.04) - 130.8125) < 2, "Last-note priority did not return to the held note");
+    engine->handleMidi(juce::MidiMessage::noteOff(1, 48));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(warmup.getMagnitude(warmup.getNumSamples() / 2, warmup.getNumSamples() / 2) < 1e-6f, "Mono note-off left a stuck note");
+
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 48, 0.8f));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(std::abs(frequency(warmup, rate, 0.04, 0.04) - 130.8125) < 2, "A detached note should start at its own pitch");
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 60, 0.8f));
+    engine->setPlaybackMode(true, 0);
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(std::abs(frequency(warmup, rate, 0.04, 0.04) - 261.625) < 2, "Zero portamento did not snap to pitch");
+    engine->handleMidi(juce::MidiMessage::controllerEvent(1, 64, 127));
+    engine->handleMidi(juce::MidiMessage::noteOff(1, 60));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(engine->voices() == 1, "Mono sustain pedal released the note too soon");
+    engine->handleMidi(juce::MidiMessage::controllerEvent(1, 64, 0));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(std::abs(frequency(warmup, rate, 0.04, 0.04) - 130.8125) < 2, "Pedal release did not return to a physically held key");
+    engine->handleMidi(juce::MidiMessage::noteOff(1, 48));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(engine->voices() == 0, "Mono sustain left a stuck voice");
+
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 60, 0.8f));
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 60, 0.8f));
+    engine->handleMidi(juce::MidiMessage::noteOff(1, 60));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(engine->voices() == 1, "Repeated mono keys were released prematurely");
+    engine->handleMidi(juce::MidiMessage::noteOff(1, 60));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(engine->voices() == 0, "Repeated mono keys left a stuck voice");
+    engine->setPlaybackMode(false, 0.4f);
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 60, 0.8f));
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 64, 0.8f));
+    check(engine->voices() == 2, "Switching back to poly did not restore chords");
+    engine->setPlaybackMode(true, 0.4f);
+    check(engine->voices() == 0, "Switching modes did not reset existing voices");
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 48, 0.8f));
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 72, 0.8f));
+    engine->stop();
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(energy(warmup) == 0, "Panic did not cancel a glide");
+}
+
+static void checkPolyGlide(const juce::File& factory, double rate) {
+    auto engine = monoEngine(factory, rate);
+    engine->setPlaybackMode(false, 0.4f);
+    engine->handleMidi(juce::MidiMessage::controllerEvent(1, 10, 0));
+    engine->handleMidi(juce::MidiMessage::controllerEvent(2, 10, 127));
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 48, 0.8f));
+    juce::AudioBuffer<float> warmup(2, juce::roundToInt(rate * 0.1));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    engine->handleMidi(juce::MidiMessage::noteOn(2, 60, 0.8f));
+    check(engine->voices() == 2, "Poly portamento removed the earlier note");
+    juce::AudioBuffer<float> audio(2, juce::roundToInt(rate * 0.5));
+    engine->render(audio, 0, audio.getNumSamples());
+    check(frequency(audio, rate, 0, 0.04, 1) < 146, "Poly note did not glide from the held pitch");
+    check(std::abs(frequency(audio, rate, 0.18, 0.04, 1) - 185) < 8, "Poly glide timing is wrong");
+    check(std::abs(frequency(audio, rate, 0.44, 0.04, 1) - 261.625) < 2, "Poly glide missed its target");
+    check(std::abs(frequency(audio, rate, 0.18, 0.04, 0) - 130.8125) < 2, "A new poly glide changed an earlier note's pitch");
+    engine->handleMidi(juce::MidiMessage::pitchWheel(2, 16383));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(std::abs(frequency(warmup, rate, 0.04, 0.04, 1) - 293.66) < 2, "Poly pitch bend is incorrect");
+    check(std::abs(frequency(warmup, rate, 0.04, 0.04, 0) - 130.8125) < 2, "Poly pitch bend affected another MIDI channel");
+    engine->handleMidi(juce::MidiMessage::noteOff(2, 60));
+    engine->handleMidi(juce::MidiMessage::noteOff(1, 48));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(engine->voices() == 0, "Poly glide left stuck notes");
+    engine->handleMidi(juce::MidiMessage::pitchWheel(2, 8192));
+    engine->handleMidi(juce::MidiMessage::noteOn(2, 72, 0.8f));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(std::abs(frequency(warmup, rate, 0.04, 0.04, 1) - 523.25) < 2, "Detached poly note inherited an old glide");
+    engine->stop();
+    engine->handleMidi(juce::MidiMessage::noteOn(1, 48, 0.8f));
+    engine->handleMidi(juce::MidiMessage::noteOn(2, 60, 0.8f));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    engine->handleMidi(juce::MidiMessage::pitchWheel(2, 16383));
+    engine->render(warmup, 0, warmup.getNumSamples());
+    const double bentMidpoint = frequency(warmup, rate, 0.03, 0.04, 1);
+    check(bentMidpoint > 180 && bentMidpoint < 211, "Pitch bend interrupted an active poly glide");
+    engine->setPlaybackMode(false, 0);
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(std::abs(frequency(warmup, rate, 0.04, 0.04, 1) - 293.66) < 2, "Disabling Porta did not finish an active poly glide");
+    engine->stop();
+    engine->render(warmup, 0, warmup.getNumSamples());
+    check(energy(warmup) == 0, "Panic did not silence poly portamento");
+}
+
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI initialise;
     try {
@@ -42,6 +179,25 @@ int main(int argc, char** argv) {
         directory.createDirectory();
         const auto factory = juce::File(__FILE__).getParentDirectory().getSiblingFile("Assets").getChildFile("WizardStarter.sf2");
         check(factory.existsAsFile(), "Factory bank missing");
+        for (double rate : {44100.0, 48000.0, 96000.0}) {
+            checkMono(factory, rate);
+            checkPolyGlide(factory, rate);
+        }
+        {
+            SoundWizardProcessor monoProcessor;
+            set(monoProcessor, "mono", 1); set(monoProcessor, "portamento", 0.4f);
+            set(monoProcessor, "customEnvelope", 1); set(monoProcessor, "attack", 0.001f);
+            set(monoProcessor, "decay", 0.001f); set(monoProcessor, "sustain", 1);
+            set(monoProcessor, "reverb", 0);
+            monoProcessor.prepareToPlay(48000, 128);
+            juce::AudioBuffer<float> audio(2, 33600); juce::MidiBuffer events;
+            events.addEvent(juce::MidiMessage::noteOn(1, 48, 0.8f), 0);
+            events.addEvent(juce::MidiMessage::noteOn(1, 60, 0.8f), 4800);
+            monoProcessor.processBlock(audio, events);
+            check(monoProcessor.activeVoices.load() == 1, "Processor Mono control did not limit overlapping notes");
+            check(frequency(audio, 48000, 0.11, 0.04) < 150, "Processor Porta control did not start a timed glide");
+            check(std::abs(frequency(audio, 48000, 0.6, 0.04) - 261.625) < 2, "Processor glide missed the target pitch");
+        }
         for (double rate : {44100.0, 48000.0, 96000.0}) {
             for (int channels : {1, 2}) {
                 SoundWizardProcessor processor;
@@ -79,6 +235,7 @@ int main(int argc, char** argv) {
         set(processor, "customEnvelope", 1); set(processor, "attack", 0.03f);
         set(processor, "decay", 0.25f); set(processor, "sustain", 0.45f);
         set(processor, "release", 0.2f); set(processor, "reverb", 0.3f); set(processor, "volume", -12);
+        set(processor, "mono", 1); set(processor, "portamento", 0.375f);
         juce::MemoryBlock saved;
         processor.getStateInformation(saved);
         SoundWizardProcessor restored;
@@ -89,6 +246,14 @@ int main(int argc, char** argv) {
         const char malformed[] = "bad state";
         restored.setStateInformation(malformed, sizeof(malformed));
         check(restored.selectedInstrument() == 2, "Malformed state changed the instrument");
+        auto legacy = processor.state.copyState();
+        legacy.removeChild(legacy.getChildWithProperty("id", "mono"), nullptr);
+        legacy.removeChild(legacy.getChildWithProperty("id", "portamento"), nullptr);
+        auto legacyXml = legacy.createXml(); juce::MemoryBlock legacyBytes;
+        juce::AudioProcessor::copyXmlToBinary(*legacyXml, legacyBytes);
+        restored.setStateInformation(legacyBytes.getData(), (int)legacyBytes.getSize()); waitForLoad(restored);
+        check(restored.state.getRawParameterValue("mono")->load() == 0
+            && restored.state.getRawParameterValue("portamento")->load() == 0, "Old projects did not restore poly mode with no glide");
 
         const auto invalid = directory.getChildFile("invalid-test.sf2");
         invalid.replaceWithText("invalid SoundFont");
@@ -150,8 +315,23 @@ int main(int argc, char** argv) {
         set(visual, "customEnvelope", 1);
         set(visual, "attack", 0.15f);
         set(visual, "release", 1.2f);
+        set(visual, "mono", 1);
+        set(visual, "portamento", 0.25f);
         auto envelopeEditor = std::unique_ptr<juce::AudioProcessorEditor>(visual.createEditor());
         snapshot(*envelopeEditor, directory.getChildFile("Sound-Wizard-envelope.png"));
+        bool monoFound = false, portaFound = false;
+        for (auto* child : envelopeEditor->getChildren()) {
+            if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child)) if (toggle->getName() == "MONO") {
+                toggle->setToggleState(false, juce::sendNotificationSync); monoFound = true;
+                check(visual.state.getRawParameterValue("mono")->load() == 0, "Mono toggle attachment failed");
+            }
+            if (auto* slider = dynamic_cast<juce::Slider*>(child)) if (slider->getName() == "PORTA") {
+                check(slider->isEnabled(), "Porta must remain enabled with Mono off");
+                slider->setValue(0.45, juce::sendNotificationSync); portaFound = true;
+                check(std::abs(visual.state.getRawParameterValue("portamento")->load() - 0.45f) < 0.001f, "Porta slider attachment failed");
+            }
+        }
+        check(monoFound && portaFound, "Mono or Porta control missing");
 
         // Exercise folder discovery and the same dropdown callback used by the editor.
         const auto libraryFolder = directory.getNonexistentChildFile("soundfonts-library-test", "", false);
@@ -201,7 +381,7 @@ int main(int argc, char** argv) {
         juce::WavAudioFormat format;
         std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(stream.release(), 44100, 2, 24, {}, 0));
         check(writer && writer->writeFromAudioSampleBuffer(audition, 0, audition.getNumSamples()), "Audition export failed");
-        std::cout << "PASS: all four SF2 presets, mono/stereo at three rates, sample-accurate MIDI, pitch/sustain, panic, custom polyphonic ADSR, automation, state and external file recall, invalid/missing SF2, load ordering, real waveform, UI attachment, per-user folder library, nested SF2 discovery, dropdown loading, refresh, empty library, preview and audition.\n";
+        std::cout << "PASS: all four SF2 presets, mono/stereo at three rates, sample-accurate MIDI, pitch/sustain, panic, custom polyphonic ADSR, automation, state and external file recall, invalid/missing SF2, load ordering, real waveform, UI attachment, mono last-note priority, independent polyphonic glide, timed glide, pitch bend during glide, sustain and repeated mono keys, legacy project defaults, per-user folder library, nested SF2 discovery, dropdown loading, refresh, empty library, preview and audition.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << "\n";

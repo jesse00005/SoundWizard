@@ -12,6 +12,8 @@ Built with JUCE and C++ as a 64-bit VST3 instrument.
 - Browse your SoundFonts from a folder in your Windows Music library.
 - Search the instruments inside a loaded SoundFont.
 - Play chords with velocity, pitch bend, and sustain pedal support.
+- Switch to Mono with last-note priority, or keep chords in poly mode.
+- Add portamento in either mode.
 - Use the SoundFont's original envelope or shape it with custom ADSR.
 - Add reverb and adjust the master volume.
 - Automate controls and save settings with your DAW project.
@@ -43,11 +45,21 @@ Music/
       pads.sf2
 ```
 
-Open the **SoundFonts library** dropdown to choose a file. It includes subfolders and refreshes whenever you open it. Each person's Music folder is detected through Windows.
+Open the **sf2 library** dropdown to choose a file. It includes subfolders and refreshes whenever you open it. Each person's Music folder is detected through Windows.
 
 You can also click **Load SF2...** or drop an `.sf2` file onto the plugin. Choose an instrument from the list on the left. The search box filters instrument names and bank/program numbers.
 
 ![Sound Wizard with custom ADSR enabled](docs/screenshots/sound-wizard-envelope.png)
+
+## Mono and portamento
+
+Enable **Mono** to play one note at a time. The most recently played note takes priority. Release it while holding an earlier note to return to that note.
+
+**Porta** works in both mono and poly modes and sets the slide time from off to two seconds. Hold one note and play another before releasing the first to hear the glide. Detached notes start directly at their own pitch.
+
+In mono mode, legato slides keep the running SoundFont sample and envelope, so wide slides retain the first note's sample tone. Release all notes before playing again to trigger the new pitch's sample. In poly mode, each new overlapping note triggers its own sample and envelope and slides from the most recently held note's current pitch. Earlier notes keep playing at their own pitches.
+
+Mono and Porta support host automation and are saved with your project. Existing projects saved before these controls were added open in poly mode with Porta off. Changing between mono and poly clears currently playing notes.
 
 ## Build from source
 

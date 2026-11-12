@@ -68,10 +68,15 @@ private:
     SoundFontsLibraryBox soundFonts;
     juce::ListBox library {"Instruments", this};
     juce::ToggleButton custom {"Use custom ADSR"};
+    juce::ToggleButton mono {"Mono"};
+    juce::Slider porta;
+    juce::Label portaLabel;
     std::array<juce::Slider, 6> sliders;
     std::array<juce::Label, 6> labels;
     std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, 6> attachments;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> customAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monoAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> portaAttachment;
     WizardKeyboard keys;
     juce::TooltipWindow tooltips {this, 600};
     std::unique_ptr<juce::FileChooser> chooser;

@@ -9,6 +9,7 @@ public:
     juce::StringArray instrumentNames() const;
     void setSampleRate(double rate);
     void setInstrument(int index);
+    void setPlaybackMode(bool mono, float portamentoSeconds);
     void setEnvelope(bool custom, float attack, float decay, float sustain, float release);
     void handleMidi(const juce::MidiMessage& message);
     void render(juce::AudioBuffer<float>& output, int start, int length);

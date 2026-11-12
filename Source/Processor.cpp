@@ -18,6 +18,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SoundWizardProcessor::makeLa
     parameters.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"release", 1}, "Release", seconds(0.005f, 10, 0.4f), 0.4f));
     parameters.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"reverb", 1}, "Reverb", juce::NormalisableRange<float>(0, 1, 0.001f), 0.12f));
     parameters.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"volume", 1}, "Volume", juce::NormalisableRange<float>(-60, 6, 0.1f), -9.0f));
+    parameters.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"mono", 1}, "Mono", false));
+    parameters.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"portamento", 1}, "Portamento", seconds(0, 2, 0.2f), 0.0f));
     return parameters;
 }
 
@@ -32,6 +34,8 @@ SoundWizardProcessor::SoundWizardProcessor()
     release = state.getRawParameterValue("release");
     reverbAmount = state.getRawParameterValue("reverb");
     volumeDb = state.getRawParameterValue("volume");
+    mono = state.getRawParameterValue("mono");
+    portamento = state.getRawParameterValue("portamento");
     for (auto& point : scope) point.store(0);
     engine = SoundFontEngine::load(BinaryData::WizardStarter_sf2, BinaryData::WizardStarter_sf2Size);
     info.name = "Wizard Starter";
@@ -179,6 +183,7 @@ void SoundWizardProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     }
     if (engine) {
         engine->setInstrument(selectedInstrument());
+        engine->setPlaybackMode(mono->load() > 0.5f, portamento->load());
         engine->setEnvelope(customEnvelope->load() > 0.5f, attack->load(), decay->load(), sustain->load(), release->load());
         if (previewRequested.exchange(false)) {
             engine->handleMidi(juce::MidiMessage::noteOff(16, 60));
@@ -271,6 +276,15 @@ void SoundWizardProcessor::setStateInformation(const void* data, int size) {
     auto xml = getXmlFromBinary(data, size);
     if (!xml || !xml->hasTagName(state.state.getType())) return;
     auto saved = juce::ValueTree::fromXml(*xml);
+    // Projects saved before these controls existed retain polyphonic, zero-glide playback.
+    for (const auto* id : {"mono", "portamento"}) {
+        if (!saved.getChildWithProperty("id", id).isValid()) {
+            juce::ValueTree parameter("PARAM");
+            parameter.setProperty("id", id, nullptr);
+            parameter.setProperty("value", 0.0f, nullptr);
+            saved.addChild(parameter, -1, nullptr);
+        }
+    }
     state.replaceState(saved);
     {
         const juce::ScopedLock lock(infoMutex);

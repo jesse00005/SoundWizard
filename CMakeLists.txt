@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(SoundWizard VERSION 0.1.1 LANGUAGES C CXX)
+project(SoundWizard VERSION 0.2.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(JUCE_DIR "" CACHE PATH "Optional path to an existing JUCE 8.0.12 source checkout")

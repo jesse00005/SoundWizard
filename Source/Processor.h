@@ -71,5 +71,7 @@ private:
     std::atomic<float>* release = nullptr;
     std::atomic<float>* reverbAmount = nullptr;
     std::atomic<float>* volumeDb = nullptr;
+    std::atomic<float>* mono = nullptr;
+    std::atomic<float>* portamento = nullptr;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoundWizardProcessor)
 };

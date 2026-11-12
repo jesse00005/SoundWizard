@@ -117,7 +117,15 @@ void CobaltLook::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
     g.drawText(button.getButtonText(), 25, 0, button.getWidth() - 25, button.getHeight(), juce::Justification::centredLeft);
 }
 void CobaltLook::drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h, float position,
-    float, float, juce::Slider::SliderStyle, juce::Slider& slider) {
+    float, float, juce::Slider::SliderStyle style, juce::Slider& slider) {
+    if (style == juce::Slider::LinearHorizontal) {
+        const int centre = y + h / 2;
+        g.setOpacity(slider.isEnabled() ? 1.0f : 0.45f);
+        bevel(g, {x, centre - 4, w, 8}, navy, true);
+        bevel(g, {juce::roundToInt(position) - 7, centre - 10, 15, 20}, highlight);
+        g.setColour(ink); g.fillRect(juce::roundToInt(position), centre - 6, 1, 12);
+        return;
+    }
     const int centre = x + w / 2;
     g.setOpacity(slider.isEnabled() ? 1.0f : 0.45f);
     bevel(g, {centre - 4, y, 8, h}, navy, true);
@@ -144,9 +152,9 @@ void WizardKeyboard::drawBlackNote(int, juce::Graphics& g, juce::Rectangle<float
 }
 
 SoundFontsLibraryBox::SoundFontsLibraryBox(juce::File folder) : libraryFolder(std::move(folder)) {
-    setName("SoundFonts library");
-    setTextWhenNothingSelected("SoundFonts library");
-    setTooltip("SoundFonts library: " + libraryFolder.getFullPathName()
+    setName("sf2 library");
+    setTextWhenNothingSelected("sf2 library");
+    setTooltip("sf2 library: " + libraryFolder.getFullPathName()
         + "\nPut .sf2 files here. Subfolders are included. Reopen this dropdown to refresh.");
     onChange = [this] {
         const int index = getSelectedId() - 1;
@@ -210,6 +218,28 @@ SoundWizardEditor::SoundWizardEditor(SoundWizardProcessor& p)
     library.setMultipleSelectionEnabled(false); library.setWantsKeyboardFocus(false);
     addAndMakeVisible(custom);
     customAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.state, "customEnvelope", custom);
+    mono.setName("MONO"); mono.setTitle("Mono");
+    mono.setTooltip("One note at a time, with last-note priority. Overlapping notes play legato.");
+    addAndMakeVisible(mono);
+    monoAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.state, "mono", mono);
+    porta.setName("PORTA"); porta.setTitle("Portamento");
+    porta.setSliderStyle(juce::Slider::LinearHorizontal);
+    porta.setTextBoxStyle(juce::Slider::TextBoxRight, false, 62, 23);
+    porta.setScrollWheelEnabled(false);
+    porta.setTooltip("Glide time between overlapping notes in mono or poly mode. Off to 2 seconds. Double-click to reset.");
+    addAndMakeVisible(porta);
+    portaAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.state, "portamento", porta);
+    porta.textFromValueFunction = [](double value) {
+        if (value == 0) return juce::String("Off");
+        return value < 1 ? juce::String(juce::roundToInt(value * 1000)) + " ms" : juce::String(value, 2) + " s";
+    };
+    porta.valueFromTextFunction = [](const juce::String& text) {
+        return text.containsIgnoreCase("ms") ? text.getDoubleValue() * 0.001 : text.getDoubleValue();
+    };
+    porta.updateText();
+    portaLabel.setText("Porta", juce::dontSendNotification);
+    portaLabel.setFont(uiFont(14)); portaLabel.setColour(juce::Label::textColourId, pale);
+    addAndMakeVisible(portaLabel);
     const char* ids[] = {"attack", "decay", "sustain", "release", "reverb", "volume"};
     const char* names[] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE", "REVERB", "VOLUME"};
     for (size_t i = 0; i < sliders.size(); ++i) {
@@ -263,7 +293,10 @@ void SoundWizardEditor::resized() {
     place(load, 20, 66, 140, 34); place(starter, 170, 66, 132, 34);
     place(preview, 670, 66, 150, 34); place(stop, 830, 66, 110, 34);
     place(search, 32, 160, 236, 28); place(soundFonts, 32, 198, 236, 28);
-    place(library, 32, 238, 236, 304);
+    place(library, 32, 238, 236, 254);
+    place(mono, 32, 501, 100, 30);
+    place(portaLabel, 32, 539, 48, 24);
+    place(porta, 84, 535, 184, 30);
     library.setRowHeight(juce::roundToInt(44 * scale));
     place(custom, 514, 374, 190, 30);
     for (size_t i = 0; i < sliders.size(); ++i) {
@@ -288,7 +321,7 @@ void SoundWizardEditor::paint(juce::Graphics& g) {
     g.setColour(juce::Colour(0xffffff00));
     g.drawText("Sound Wizard", 66, 12, 360, 34, juce::Justification::centredLeft);
     g.setFont(monoFont(12)); g.setColour(highlight);
-    g.drawText("SOUNDFONT PLAYER  /  v0.1.1", 620, 15, 312, 27, juce::Justification::centredRight);
+    g.drawText("SOUNDFONT PLAYER  /  v0.2.0", 620, 15, 312, 27, juce::Justification::centredRight);
     g.setFont(uiFont(14)); g.setColour(pale);
     const auto status = info.loading || info.message != "Ready" ? info.message : info.name;
     g.drawFittedText(status, 320, 66, 334, 34, juce::Justification::centredLeft, 1);
