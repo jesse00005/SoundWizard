@@ -43,7 +43,7 @@ Music/
       pads.sf2
 ```
 
-Open the **SoundFonts library** dropdown to choose a file. It includes subfolders and refreshes whenever you open it. Each person's Music folder is detected through Windows, so the same plugin works with your friends' own library locations.
+Open the **SoundFonts library** dropdown to choose a file. It includes subfolders and refreshes whenever you open it. Each person's Music folder is detected through Windows.
 
 You can also click **Load SF2...** or drop an `.sf2` file onto the plugin. Choose an instrument from the list on the left. The search box filters instrument names and bank/program numbers.
 
